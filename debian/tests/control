@@ -1,0 +1,24 @@
+Test-Command: /usr/share/cargo/bin/cargo-auto-test pyo3-macros-backend 0.16.5 --all-targets --all-features
+Features: test-name=rust-pyo3-macros-backend:@
+Depends: dh-cargo (>= 18), @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test pyo3-macros-backend 0.16.5 --all-targets --no-default-features --features abi3
+Features: test-name=librust-pyo3-macros-backend-dev:abi3
+Depends: dh-cargo (>= 18), @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test pyo3-macros-backend 0.16.5 --all-targets 
+Features: test-name=librust-pyo3-macros-backend-dev:default
+Depends: dh-cargo (>= 18), @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test pyo3-macros-backend 0.16.5 --all-targets --no-default-features --features pyproto
+Features: test-name=librust-pyo3-macros-backend-dev:pyproto
+Depends: dh-cargo (>= 18), @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test pyo3-macros-backend 0.16.5 --all-targets --no-default-features
+Features: test-name=librust-pyo3-macros-backend-dev:
+Depends: dh-cargo (>= 18), @
+Restrictions: allow-stderr, skip-not-installable
