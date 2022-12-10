@@ -15,6 +15,7 @@ pub mod kw {
     syn::custom_keyword!(extends);
     syn::custom_keyword!(freelist);
     syn::custom_keyword!(from_py_with);
+    syn::custom_keyword!(frozen);
     syn::custom_keyword!(gc);
     syn::custom_keyword!(get);
     syn::custom_keyword!(item);
@@ -22,6 +23,7 @@ pub mod kw {
     syn::custom_keyword!(module);
     syn::custom_keyword!(name);
     syn::custom_keyword!(pass_module);
+    syn::custom_keyword!(sequence);
     syn::custom_keyword!(set);
     syn::custom_keyword!(signature);
     syn::custom_keyword!(subclass);
@@ -39,7 +41,7 @@ pub struct KeywordAttribute<K, V> {
 
 /// A helper type which parses the inner type via a literal string
 /// e.g. LitStrValue<Path> -> parses "some::path" in quotes.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LitStrValue<T>(pub T);
 
 impl<T: Parse> Parse for LitStrValue<T> {
@@ -56,7 +58,7 @@ impl<T: ToTokens> ToTokens for LitStrValue<T> {
 }
 
 /// A helper type which parses a name via a literal string
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NameLitStr(pub Ident);
 
 impl Parse for NameLitStr {

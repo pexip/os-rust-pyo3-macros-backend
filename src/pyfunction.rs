@@ -1,5 +1,7 @@
 // Copyright (c) 2017-present PyO3 Project and Contributors
 
+use std::borrow::Cow;
+
 use crate::{
     attributes::{
         self, get_pyo3_options, take_attributes, take_pyo3_options, CrateAttribute,
@@ -19,7 +21,7 @@ use syn::{
     token::Comma,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Argument {
     PosOnlyArgsSeparator,
     VarArgsSeparator,
@@ -408,7 +410,7 @@ pub fn impl_wrap_pyfunction(
         options
             .text_signature
             .as_ref()
-            .map(|attr| (&python_name, attr)),
+            .map(|attr| (Cow::Borrowed(&python_name), attr)),
     );
 
     let krate = get_pyo3_crate(&options.krate);
@@ -428,7 +430,6 @@ pub fn impl_wrap_pyfunction(
         doc,
         deprecations: options.deprecations,
         text_signature: options.text_signature,
-        krate: krate.clone(),
         unsafety: func.sig.unsafety,
     };
 
@@ -440,18 +441,13 @@ pub fn impl_wrap_pyfunction(
     let methoddef = spec.get_methoddef(wrapper_ident);
 
     let wrapped_pyfunction = quote! {
-        #wrapper
 
         // Create a module with the same name as the `#[pyfunction]` - this way `use <the function>`
         // will actually bring both the module and the function into scope.
         #[doc(hidden)]
         #vis mod #name {
-            use #krate as _pyo3;
-            pub(crate) struct PyO3Def;
-
-            // Exported for `wrap_pyfunction!`
-            pub use _pyo3::impl_::pyfunction::wrap_pyfunction as wrap;
-            pub const DEF: _pyo3::PyMethodDef = <PyO3Def as _pyo3::impl_::pyfunction::PyFunctionDef>::DEF;
+            pub(crate) struct MakeDef;
+            pub const DEF: #krate::impl_::pyfunction::PyMethodDef = MakeDef::DEF;
         }
 
         // Generate the definition inside an anonymous function in the same scope as the original function -
@@ -460,9 +456,11 @@ pub fn impl_wrap_pyfunction(
         // inside a function body)
         const _: () = {
             use #krate as _pyo3;
-            impl _pyo3::impl_::pyfunction::PyFunctionDef for #name::PyO3Def {
-                const DEF: _pyo3::PyMethodDef = #methoddef;
+            impl #name::MakeDef {
+                const DEF: #krate::impl_::pyfunction::PyMethodDef = #methoddef;
             }
+
+            #wrapper
         };
     };
     Ok(wrapped_pyfunction)

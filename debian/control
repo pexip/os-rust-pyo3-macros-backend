@@ -17,10 +17,11 @@ Build-Depends: debhelper (>= 12),
 Maintainer: Debian Rust Maintainers <pkg-rust-maintainers@alioth-lists.debian.net>
 Uploaders:
  Jelmer Vernooĳ <jelmer@debian.org>
-Standards-Version: 4.5.1
+Standards-Version: 4.6.1
 Vcs-Git: https://salsa.debian.org/rust-team/debcargo-conf.git [src/pyo3-macros-backend]
 Vcs-Browser: https://salsa.debian.org/rust-team/debcargo-conf/tree/master/src/pyo3-macros-backend
 Homepage: https://github.com/pyo3/pyo3
+X-Cargo-Crate: pyo3-macros-backend
 Rules-Requires-Root: no
 
 Package: librust-pyo3-macros-backend-dev
@@ -44,14 +45,14 @@ Provides:
  librust-pyo3-macros-backend-0+abi3-dev (= ${binary:Version}),
  librust-pyo3-macros-backend-0+default-dev (= ${binary:Version}),
  librust-pyo3-macros-backend-0+pyproto-dev (= ${binary:Version}),
- librust-pyo3-macros-backend-0.16-dev (= ${binary:Version}),
- librust-pyo3-macros-backend-0.16+abi3-dev (= ${binary:Version}),
- librust-pyo3-macros-backend-0.16+default-dev (= ${binary:Version}),
- librust-pyo3-macros-backend-0.16+pyproto-dev (= ${binary:Version}),
- librust-pyo3-macros-backend-0.16.5-dev (= ${binary:Version}),
- librust-pyo3-macros-backend-0.16.5+abi3-dev (= ${binary:Version}),
- librust-pyo3-macros-backend-0.16.5+default-dev (= ${binary:Version}),
- librust-pyo3-macros-backend-0.16.5+pyproto-dev (= ${binary:Version})
+ librust-pyo3-macros-backend-0.17-dev (= ${binary:Version}),
+ librust-pyo3-macros-backend-0.17+abi3-dev (= ${binary:Version}),
+ librust-pyo3-macros-backend-0.17+default-dev (= ${binary:Version}),
+ librust-pyo3-macros-backend-0.17+pyproto-dev (= ${binary:Version}),
+ librust-pyo3-macros-backend-0.17.3-dev (= ${binary:Version}),
+ librust-pyo3-macros-backend-0.17.3+abi3-dev (= ${binary:Version}),
+ librust-pyo3-macros-backend-0.17.3+default-dev (= ${binary:Version}),
+ librust-pyo3-macros-backend-0.17.3+pyproto-dev (= ${binary:Version})
 Description: Code generation for PyO3 package - Rust source code
  This package contains the source for the Rust pyo3-macros-backend crate,
  packaged by debcargo for use with cargo and dh-cargo.
