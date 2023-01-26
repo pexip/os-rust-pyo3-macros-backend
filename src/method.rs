@@ -1,11 +1,12 @@
 // Copyright (c) 2017-present PyO3 Project and Contributors
 
+use std::borrow::Cow;
+
 use crate::attributes::TextSignatureAttribute;
-use crate::deprecations::Deprecation;
 use crate::params::{accept_args_kwargs, impl_arg_params};
 use crate::pyfunction::PyFunctionOptions;
 use crate::pyfunction::{PyFunctionArgPyO3Attributes, PyFunctionSignature};
-use crate::utils::{self, get_pyo3_crate, PythonDoc};
+use crate::utils::{self, PythonDoc};
 use crate::{deprecations::Deprecations, pyfunction::Argument};
 use proc_macro2::{Span, TokenStream};
 use quote::ToTokens;
@@ -222,7 +223,6 @@ pub struct FnSpec<'a> {
     pub deprecations: Deprecations,
     pub convention: CallingConvention,
     pub text_signature: Option<TextSignatureAttribute>,
-    pub krate: syn::Path,
     pub unsafety: Option<syn::Token![unsafe]>,
 }
 
@@ -264,9 +264,7 @@ impl<'a> FnSpec<'a> {
     ) -> Result<FnSpec<'a>> {
         let PyFunctionOptions {
             text_signature,
-            krate,
             name,
-            mut deprecations,
             ..
         } = options;
 
@@ -274,7 +272,7 @@ impl<'a> FnSpec<'a> {
             ty: fn_type_attr,
             args: fn_attrs,
             mut python_name,
-        } = parse_method_attributes(meth_attrs, name.map(|name| name.value.0), &mut deprecations)?;
+        } = parse_method_attributes(meth_attrs, name.map(|name| name.value.0))?;
 
         let (fn_type, skip_first_arg, fixed_convention) =
             Self::parse_fn_type(sig, fn_type_attr, &mut python_name)?;
@@ -283,11 +281,12 @@ impl<'a> FnSpec<'a> {
         let name = &sig.ident;
         let ty = get_return_info(&sig.output);
         let python_name = python_name.as_ref().unwrap_or(name).unraw();
-        let krate = get_pyo3_crate(&krate);
 
         let doc = utils::get_doc(
             meth_attrs,
-            text_signature.as_ref().map(|attr| (&python_name, attr)),
+            text_signature
+                .as_ref()
+                .map(|attr| (Cow::Borrowed(&python_name), attr)),
         );
 
         let arguments: Vec<_> = if skip_first_arg {
@@ -315,9 +314,8 @@ impl<'a> FnSpec<'a> {
             args: arguments,
             output: ty,
             doc,
-            deprecations,
+            deprecations: Deprecations::new(),
             text_signature,
-            krate,
             unsafety: sig.unsafety,
         })
     }
@@ -370,13 +368,7 @@ impl<'a> FnSpec<'a> {
 
         let (fn_type, skip_first_arg, fixed_convention) = match fn_type_attr {
             Some(MethodTypeAttribute::StaticMethod) => (FnType::FnStatic, false, None),
-            Some(MethodTypeAttribute::ClassAttribute) => {
-                ensure_spanned!(
-                    sig.inputs.is_empty(),
-                    sig.inputs.span() => "class attribute methods cannot take arguments"
-                );
-                (FnType::ClassAttribute, false, None)
-            }
+            Some(MethodTypeAttribute::ClassAttribute) => (FnType::ClassAttribute, false, None),
             Some(MethodTypeAttribute::New) => {
                 if let Some(name) = &python_name {
                     bail_spanned!(name.span() => "`name` not allowed with `#[new]`");
@@ -468,9 +460,6 @@ impl<'a> FnSpec<'a> {
         let deprecations = &self.deprecations;
         let self_conversion = self.tp.self_conversion(cls, ExtractErrorMode::Raise);
         let self_arg = self.tp.self_arg();
-        let arg_names = (0..self.args.len())
-            .map(|pos| syn::Ident::new(&format!("arg{}", pos), Span::call_site()))
-            .collect::<Vec<_>>();
         let py = syn::Ident::new("_py", Span::call_site());
         let func_name = &self.name;
         let rust_name = if let Some(cls) = cls {
@@ -478,89 +467,99 @@ impl<'a> FnSpec<'a> {
         } else {
             quote!(#func_name)
         };
-        let rust_call =
-            quote! { _pyo3::callback::convert(#py, #rust_name(#self_arg #(#arg_names),*)) };
-        let krate = &self.krate;
+
+        // The method call is necessary to generate a decent error message.
+        let rust_call = |args: Vec<TokenStream>| {
+            quote! {
+                let mut ret = #rust_name(#self_arg #(#args),*);
+
+                if false {
+                    use _pyo3::impl_::ghost::IntoPyResult;
+                    ret.assert_into_py_result();
+                }
+
+                _pyo3::callback::convert(#py, ret)
+            }
+        };
+
         Ok(match self.convention {
             CallingConvention::Noargs => {
+                let call = rust_call(vec![]);
                 quote! {
                     unsafe extern "C" fn #ident (
-                        _slf: *mut #krate::ffi::PyObject,
-                        _args: *mut #krate::ffi::PyObject,
-                    ) -> *mut #krate::ffi::PyObject
+                        _slf: *mut _pyo3::ffi::PyObject,
+                        _args: *mut _pyo3::ffi::PyObject,
+                    ) -> *mut _pyo3::ffi::PyObject
                     {
-                        use #krate as _pyo3;
                         #deprecations
                         let gil = _pyo3::GILPool::new();
                         let #py = gil.python();
                         _pyo3::callback::panic_result_into_callback_output(#py, ::std::panic::catch_unwind(move || -> _pyo3::PyResult<_> {
                             #self_conversion
-                            #rust_call
+                            #call
                         }))
                     }
                 }
             }
             CallingConvention::Fastcall => {
-                let arg_convert = impl_arg_params(self, cls, &py, true)?;
+                let (arg_convert, args) = impl_arg_params(self, cls, &py, true)?;
+                let call = rust_call(args);
                 quote! {
                     unsafe extern "C" fn #ident (
-                        _slf: *mut #krate::ffi::PyObject,
-                        _args: *const *mut #krate::ffi::PyObject,
-                        _nargs: #krate::ffi::Py_ssize_t,
-                        _kwnames: *mut #krate::ffi::PyObject) -> *mut #krate::ffi::PyObject
+                        _slf: *mut _pyo3::ffi::PyObject,
+                        _args: *const *mut _pyo3::ffi::PyObject,
+                        _nargs: _pyo3::ffi::Py_ssize_t,
+                        _kwnames: *mut _pyo3::ffi::PyObject) -> *mut _pyo3::ffi::PyObject
                     {
-                        use #krate as _pyo3;
                         #deprecations
                         let gil = _pyo3::GILPool::new();
                         let #py = gil.python();
                         _pyo3::callback::panic_result_into_callback_output(#py, ::std::panic::catch_unwind(move || -> _pyo3::PyResult<_> {
                             #self_conversion
                             #arg_convert
-                            #rust_call
+                            #call
                         }))
                     }
                 }
             }
             CallingConvention::Varargs => {
-                let arg_convert = impl_arg_params(self, cls, &py, false)?;
+                let (arg_convert, args) = impl_arg_params(self, cls, &py, false)?;
+                let call = rust_call(args);
                 quote! {
                     unsafe extern "C" fn #ident (
-                        _slf: *mut #krate::ffi::PyObject,
-                        _args: *mut #krate::ffi::PyObject,
-                        _kwargs: *mut #krate::ffi::PyObject) -> *mut #krate::ffi::PyObject
+                        _slf: *mut _pyo3::ffi::PyObject,
+                        _args: *mut _pyo3::ffi::PyObject,
+                        _kwargs: *mut _pyo3::ffi::PyObject) -> *mut _pyo3::ffi::PyObject
                     {
-                        use #krate as _pyo3;
                         #deprecations
                         let gil = _pyo3::GILPool::new();
                         let #py = gil.python();
                         _pyo3::callback::panic_result_into_callback_output(#py, ::std::panic::catch_unwind(move || -> _pyo3::PyResult<_> {
                             #self_conversion
                             #arg_convert
-                            #rust_call
+                            #call
                         }))
                     }
                 }
             }
             CallingConvention::TpNew => {
-                let rust_call = quote! { #rust_name(#(#arg_names),*) };
-                let arg_convert = impl_arg_params(self, cls, &py, false)?;
+                let (arg_convert, args) = impl_arg_params(self, cls, &py, false)?;
+                let call = quote! { #rust_name(#(#args),*) };
                 quote! {
                     unsafe extern "C" fn #ident (
-                        subtype: *mut #krate::ffi::PyTypeObject,
-                        _args: *mut #krate::ffi::PyObject,
-                        _kwargs: *mut #krate::ffi::PyObject) -> *mut #krate::ffi::PyObject
+                        subtype: *mut _pyo3::ffi::PyTypeObject,
+                        _args: *mut _pyo3::ffi::PyObject,
+                        _kwargs: *mut _pyo3::ffi::PyObject) -> *mut _pyo3::ffi::PyObject
                     {
-                        use #krate as _pyo3;
                         #deprecations
-                        use _pyo3::callback::IntoPyCallbackOutput;
+                        use _pyo3::{callback::IntoPyCallbackOutput, pyclass_init::PyObjectInit};
                         let gil = _pyo3::GILPool::new();
                         let #py = gil.python();
                         _pyo3::callback::panic_result_into_callback_output(#py, ::std::panic::catch_unwind(move || -> _pyo3::PyResult<_> {
                             #arg_convert
-                            let result = #rust_call;
+                            let result = #call;
                             let initializer: _pyo3::PyClassInitializer::<#cls> = result.convert(#py)?;
-                            let cell = initializer.create_cell_from_subtype(#py, subtype)?;
-                            ::std::result::Result::Ok(cell as *mut _pyo3::ffi::PyObject)
+                            initializer.into_new_object(#py, subtype)
                         }))
                     }
                 }
@@ -610,7 +609,6 @@ struct MethodAttributes {
 fn parse_method_attributes(
     attrs: &mut Vec<syn::Attribute>,
     mut python_name: Option<syn::Ident>,
-    deprecations: &mut Deprecations,
 ) -> Result<MethodAttributes> {
     let mut new_attrs = Vec::new();
     let mut args = Vec::new();
@@ -633,12 +631,7 @@ fn parse_method_attributes(
                 } else if name.is_ident("init") || name.is_ident("__init__") {
                     bail_spanned!(name.span() => "#[init] is disabled since PyO3 0.9.0");
                 } else if name.is_ident("call") || name.is_ident("__call__") {
-                    deprecations.push(Deprecation::CallAttribute, name.span());
-                    ensure_spanned!(
-                        python_name.is_none(),
-                        python_name.span() => "`name` may not be used with `#[call]`"
-                    );
-                    python_name = Some(syn::Ident::new("__call__", Span::call_site()));
+                    bail_spanned!(name.span() => "use `fn __call__` instead of `#[call]` attribute since PyO3 0.15.0");
                 } else if name.is_ident("classmethod") {
                     set_ty!(MethodTypeAttribute::ClassMethod, name);
                 } else if name.is_ident("staticmethod") {
