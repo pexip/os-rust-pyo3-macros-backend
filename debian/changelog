@@ -1,3 +1,9 @@
+rust-pyo3-macros-backend (0.20.2-1+pexip24u1) pexip; urgency=medium
+
+  * New upstream release
+
+ -- Huw Jones <huw@pexip.com>  Tue, 21 May 2024 14:38:04 +0100
+
 rust-pyo3-macros-backend (0.20.2-1) unstable; urgency=medium
 
   * Package pyo3-macros-backend 0.20.2 from crates.io using debcargo 2.6.1
