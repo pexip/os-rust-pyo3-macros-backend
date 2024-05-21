@@ -171,7 +171,22 @@ impl<'a> Container<'a> {
                             .ident
                             .as_ref()
                             .expect("Named fields should have identifiers");
-                        let attrs = FieldPyO3Attributes::from_attrs(&field.attrs)?;
+                        let mut attrs = FieldPyO3Attributes::from_attrs(&field.attrs)?;
+
+                        if let Some(ref from_item_all) = options.from_item_all {
+                            if let Some(replaced) = attrs.getter.replace(FieldGetter::GetItem(None))
+                            {
+                                match replaced {
+                                    FieldGetter::GetItem(Some(item_name)) => {
+                                        attrs.getter = Some(FieldGetter::GetItem(Some(item_name)));
+                                    }
+                                    FieldGetter::GetItem(None) => bail_spanned!(from_item_all.span() => "Useless `item` - the struct is already annotated with `from_item_all`"),
+                                    FieldGetter::GetAttr(_) => bail_spanned!(
+                                        from_item_all.span() => "The struct is already annotated with `from_item_all`, `attribute` is not allowed"
+                                    ),
+                                }
+                            }
+                        }
 
                         Ok(NamedStructField {
                             ident,
@@ -278,7 +293,6 @@ impl<'a> Container<'a> {
         let self_ty = &self.path;
         let struct_name = &self.name();
         let field_idents: Vec<_> = (0..struct_fields.len())
-            .into_iter()
             .map(|i| format_ident!("arg{}", i))
             .collect();
         let fields = struct_fields.iter().zip(&field_idents).enumerate().map(|(index, (field, ident))| {
@@ -315,8 +329,13 @@ impl<'a> Container<'a> {
                 FieldGetter::GetAttr(None) => {
                     quote!(getattr(_pyo3::intern!(obj.py(), #field_name)))
                 }
+                FieldGetter::GetItem(Some(syn::Lit::Str(key))) => {
+                    quote!(get_item(_pyo3::intern!(obj.py(), #key)))
+                }
                 FieldGetter::GetItem(Some(key)) => quote!(get_item(#key)),
-                FieldGetter::GetItem(None) => quote!(get_item(#field_name)),
+                FieldGetter::GetItem(None) => {
+                    quote!(get_item(_pyo3::intern!(obj.py(), #field_name)))
+                }
             };
             let extractor = match &field.from_py_with {
                 None => {
@@ -339,6 +358,8 @@ impl<'a> Container<'a> {
 struct ContainerOptions {
     /// Treat the Container as a Wrapper, directly extract its fields from the input object.
     transparent: bool,
+    /// Force every field to be extracted from item of source Python object.
+    from_item_all: Option<attributes::kw::from_item_all>,
     /// Change the name of an enum variant in the generated error message.
     annotation: Option<syn::LitStr>,
     /// Change the path for the pyo3 crate
@@ -349,6 +370,8 @@ struct ContainerOptions {
 enum ContainerPyO3Attribute {
     /// Treat the Container as a Wrapper, directly extract its fields from the input object.
     Transparent(attributes::kw::transparent),
+    /// Force every field to be extracted from item of source Python object.
+    ItemAll(attributes::kw::from_item_all),
     /// Change the name of an enum variant in the generated error message.
     ErrorAnnotation(LitStr),
     /// Change the path for the pyo3 crate
@@ -361,6 +384,9 @@ impl Parse for ContainerPyO3Attribute {
         if lookahead.peek(attributes::kw::transparent) {
             let kw: attributes::kw::transparent = input.parse()?;
             Ok(ContainerPyO3Attribute::Transparent(kw))
+        } else if lookahead.peek(attributes::kw::from_item_all) {
+            let kw: attributes::kw::from_item_all = input.parse()?;
+            Ok(ContainerPyO3Attribute::ItemAll(kw))
         } else if lookahead.peek(attributes::kw::annotation) {
             let _: attributes::kw::annotation = input.parse()?;
             let _: Token![=] = input.parse()?;
@@ -387,6 +413,13 @@ impl ContainerOptions {
                                 kw.span() => "`transparent` may only be provided once"
                             );
                             options.transparent = true;
+                        }
+                        ContainerPyO3Attribute::ItemAll(kw) => {
+                            ensure_spanned!(
+                                options.from_item_all.is_none(),
+                                kw.span() => "`from_item_all` may only be provided once"
+                            );
+                            options.from_item_all = Some(kw);
                         }
                         ContainerPyO3Attribute::ErrorAnnotation(lit_str) => {
                             ensure_spanned!(
@@ -490,7 +523,7 @@ impl FieldPyO3Attributes {
                                 getter.is_none(),
                                 attr.span() => "only one of `attribute` or `item` can be provided"
                             );
-                            getter = Some(field_getter)
+                            getter = Some(field_getter);
                         }
                         FieldPyO3Attribute::FromPyWith(from_py_with_attr) => {
                             ensure_spanned!(
@@ -511,7 +544,7 @@ impl FieldPyO3Attributes {
     }
 }
 
-fn verify_and_get_lifetime(generics: &syn::Generics) -> Result<Option<&syn::LifetimeDef>> {
+fn verify_and_get_lifetime(generics: &syn::Generics) -> Result<Option<&syn::LifetimeParam>> {
     let mut lifetimes = generics.lifetimes();
     let lifetime = lifetimes.next();
     ensure_spanned!(
@@ -575,7 +608,7 @@ pub fn build_derive_from_pyobject(tokens: &DeriveInput) -> Result<TokenStream> {
             use #krate as _pyo3;
 
             #[automatically_derived]
-            impl#trait_generics _pyo3::FromPyObject<#lt_param> for #ident#generics #where_clause {
+            impl #trait_generics _pyo3::FromPyObject<#lt_param> for #ident #generics #where_clause {
                 fn extract(obj: &#lt_param _pyo3::PyAny) -> _pyo3::PyResult<Self>  {
                     #derives
                 }
