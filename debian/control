@@ -24,7 +24,7 @@ Vcs-Browser: https://salsa.debian.org/rust-team/debcargo-conf/tree/master/src/py
 Homepage: https://github.com/pyo3/pyo3
 X-Cargo-Crate: pyo3-macros-backend
 Rules-Requires-Root: no
-XS-Pexip-Upstream: http://ftp.debian.org/debian/ bookworm
+XS-Pexip-Upstream: http://ftp.debian.org/debian/ trixie
 
 Package: librust-pyo3-macros-backend-dev
 Architecture: any
