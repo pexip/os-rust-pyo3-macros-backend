@@ -1,3 +1,9 @@
+rust-pyo3-macros-backend (0.20.2-1+pexip24u2) pexip; urgency=medium
+
+  * Rebuild with rustc 1.79
+
+ -- Huw Jones <huw@pexip.com>  Thu, 11 Jul 2024 10:37:28 +0100
+
 rust-pyo3-macros-backend (0.20.2-1+pexip24u1) pexip; urgency=medium
 
   * New upstream release
