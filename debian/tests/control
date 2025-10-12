@@ -1,0 +1,24 @@
+Test-Command: /usr/share/cargo/bin/cargo-auto-test pyo3-macros-backend 0.26.0 --all-targets --all-features
+Features: test-name=rust-pyo3-macros-backend:@
+Depends: dh-cargo (>= 31), rustc (>= 1.74), @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test pyo3-macros-backend 0.26.0 --all-targets
+Features: test-name=librust-pyo3-macros-backend-dev:default
+Depends: dh-cargo (>= 31), rustc (>= 1.74), @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test pyo3-macros-backend 0.26.0 --all-targets --no-default-features --features experimental-async
+Features: test-name=librust-pyo3-macros-backend-dev:experimental-async
+Depends: dh-cargo (>= 31), rustc (>= 1.74), @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test pyo3-macros-backend 0.26.0 --all-targets --no-default-features --features experimental-inspect
+Features: test-name=librust-pyo3-macros-backend-dev:experimental-inspect
+Depends: dh-cargo (>= 31), rustc (>= 1.74), @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test pyo3-macros-backend 0.26.0 --all-targets --no-default-features
+Features: test-name=librust-pyo3-macros-backend-dev:
+Depends: dh-cargo (>= 31), rustc (>= 1.74), @
+Restrictions: allow-stderr, skip-not-installable
