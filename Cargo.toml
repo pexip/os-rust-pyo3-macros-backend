@@ -11,11 +11,19 @@
 
 [package]
 edition = "2021"
+rust-version = "1.74"
 name = "pyo3-macros-backend"
-version = "0.20.2"
+version = "0.26.0"
 authors = ["PyO3 Project and Contributors <https://github.com/PyO3>"]
+build = "build.rs"
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 description = "Code generation for PyO3 package"
 homepage = "https://github.com/pyo3/pyo3"
+readme = false
 keywords = [
     "pyo3",
     "python",
@@ -29,19 +37,31 @@ categories = [
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/pyo3/pyo3"
 
+[features]
+experimental-async = []
+experimental-inspect = []
+
+[lib]
+name = "pyo3_macros_backend"
+path = "src/lib.rs"
+
 [dependencies.heck]
-version = "0.4"
+version = "0.5"
 
 [dependencies.proc-macro2]
-version = "1"
+version = "1.0.60"
 default-features = false
+
+[dependencies.pyo3-build-config]
+version = "=0.26.0"
+features = ["resolve-config"]
 
 [dependencies.quote]
 version = "1"
 default-features = false
 
 [dependencies.syn]
-version = "2"
+version = "2.0.59"
 features = [
     "derive",
     "parsing",
@@ -49,11 +69,12 @@ features = [
     "clone-impls",
     "full",
     "extra-traits",
+    "visit-mut",
 ]
 default-features = false
 
-[features]
-abi3 = []
+[build-dependencies.pyo3-build-config]
+version = "=0.26.0"
 
 [lints.clippy]
 checked_conversions = "warn"
@@ -73,9 +94,13 @@ useless_transmute = "warn"
 [lints.rust]
 elided_lifetimes_in_paths = "warn"
 invalid_doc_attributes = "warn"
-rust_2018_idioms = "warn"
 rust_2021_prelude_collisions = "warn"
+unsafe_op_in_unsafe_fn = "warn"
 unused_lifetimes = "warn"
+
+[lints.rust.rust_2018_idioms]
+level = "warn"
+priority = -1
 
 [lints.rustdoc]
 bare_urls = "warn"
