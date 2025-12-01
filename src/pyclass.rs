@@ -17,7 +17,6 @@ use crate::combine_errors::CombineErrors;
 #[cfg(feature = "experimental-inspect")]
 use crate::introspection::{
     class_introspection_code, function_introspection_code, introspection_id_const,
-    unique_element_id,
 };
 use crate::konst::{ConstAttributes, ConstSpec};
 use crate::method::{FnArg, FnSpec, PyArg, RegularArg};
@@ -25,6 +24,8 @@ use crate::pyfunction::ConstructorAttribute;
 #[cfg(feature = "experimental-inspect")]
 use crate::pyfunction::FunctionSignature;
 use crate::pyimpl::{gen_py_const, get_cfg_attributes, PyClassMethodsType};
+#[cfg(feature = "experimental-inspect")]
+use crate::pymethod::field_python_name;
 use crate::pymethod::{
     impl_py_class_attribute, impl_py_getter_def, impl_py_setter_def, MethodAndMethodDef,
     MethodAndSlotDef, PropertyType, SlotDef, __GETITEM__, __HASH__, __INT__, __LEN__, __REPR__,
@@ -89,6 +90,8 @@ pub struct PyClassPyO3Options {
     pub unsendable: Option<kw::unsendable>,
     pub weakref: Option<kw::weakref>,
     pub generic: Option<kw::generic>,
+    pub from_py_object: Option<kw::from_py_object>,
+    pub skip_from_py_object: Option<kw::skip_from_py_object>,
 }
 
 pub enum PyClassPyO3Option {
@@ -114,6 +117,8 @@ pub enum PyClassPyO3Option {
     Unsendable(kw::unsendable),
     Weakref(kw::weakref),
     Generic(kw::generic),
+    FromPyObject(kw::from_py_object),
+    SkipFromPyObject(kw::skip_from_py_object),
 }
 
 impl Parse for PyClassPyO3Option {
@@ -163,6 +168,10 @@ impl Parse for PyClassPyO3Option {
             input.parse().map(PyClassPyO3Option::Weakref)
         } else if lookahead.peek(attributes::kw::generic) {
             input.parse().map(PyClassPyO3Option::Generic)
+        } else if lookahead.peek(attributes::kw::from_py_object) {
+            input.parse().map(PyClassPyO3Option::FromPyObject)
+        } else if lookahead.peek(attributes::kw::skip_from_py_object) {
+            input.parse().map(PyClassPyO3Option::SkipFromPyObject)
         } else {
             Err(lookahead.error())
         }
@@ -242,6 +251,20 @@ impl PyClassPyO3Options {
                 set_option!(weakref);
             }
             PyClassPyO3Option::Generic(generic) => set_option!(generic),
+            PyClassPyO3Option::SkipFromPyObject(skip_from_py_object) => {
+                ensure_spanned!(
+                    self.from_py_object.is_none(),
+                    skip_from_py_object.span() => "`skip_from_py_object` and `from_py_object` are mutually exclusive"
+                );
+                set_option!(skip_from_py_object)
+            }
+            PyClassPyO3Option::FromPyObject(from_py_object) => {
+                ensure_spanned!(
+                    self.skip_from_py_object.is_none(),
+                    from_py_object.span() => "`skip_from_py_object` and `from_py_object` are mutually exclusive"
+                );
+                set_option!(from_py_object)
+            }
         }
         Ok(())
     }
@@ -1120,7 +1143,6 @@ fn impl_complex_enum(
 
     let pyclass_impls: TokenStream = [
         impl_builder.impl_pyclass(ctx),
-        impl_builder.impl_extractext(ctx),
         enum_into_pyobject_impl,
         impl_builder.impl_pyclassimpl(ctx)?,
         impl_builder.impl_add_to_module(ctx),
@@ -1516,32 +1538,26 @@ fn generate_protocol_slot(
     #[cfg(feature = "experimental-inspect")]
     {
         // We generate introspection data
-        let associated_method = def.associated_method;
         let signature = FunctionSignature::from_arguments(introspection_data.arguments);
         let returns = introspection_data.returns;
-        let introspection = introspection_data
-            .names
-            .iter()
-            .map(|name| {
-                function_introspection_code(
-                    &ctx.pyo3_path,
-                    None,
-                    name,
-                    &signature,
-                    Some("self"),
-                    parse_quote!(-> #returns),
-                    [],
-                    Some(cls),
-                )
-            })
-            .collect::<Vec<_>>();
-        let const_name = format_ident!("_{}", unique_element_id()); // We need an explicit name here
-        def.associated_method = quote! {
-            #associated_method
-            const #const_name: () = {
-                #(#introspection)*
-            };
-        };
+        def.add_introspection(
+            introspection_data
+                .names
+                .iter()
+                .flat_map(|name| {
+                    function_introspection_code(
+                        &ctx.pyo3_path,
+                        None,
+                        name,
+                        &signature,
+                        Some("self"),
+                        parse_quote!(-> #returns),
+                        [],
+                        Some(cls),
+                    )
+                })
+                .collect(),
+        );
     }
     Ok(def)
 }
@@ -1829,7 +1845,7 @@ fn complex_enum_variant_field_getter<'a>(
         unsafety: None,
         warnings: vec![],
         #[cfg(feature = "experimental-inspect")]
-        output: syn::ReturnType::Type(Token![->](field_span), Box::new(variant_cls_type.clone())),
+        output: parse_quote!(-> #variant_cls_type),
     };
 
     let property_type = crate::pymethod::PropertyType::Function {
@@ -1862,31 +1878,72 @@ fn descriptors_to_items(
         }
 
         if options.get.is_some() {
-            let getter = impl_py_getter_def(
+            let renaming_rule = rename_all.map(|rename_all| rename_all.value.rule);
+            #[cfg_attr(not(feature = "experimental-inspect"), allow(unused_mut))]
+            let mut getter = impl_py_getter_def(
                 &ty,
                 PropertyType::Descriptor {
                     field_index,
                     field,
                     python_name: options.name.as_ref(),
-                    renaming_rule: rename_all.map(|rename_all| rename_all.value.rule),
+                    renaming_rule,
                 },
                 ctx,
             )?;
+            #[cfg(feature = "experimental-inspect")]
+            {
+                // We generate introspection data
+                let return_type = &field.ty;
+                getter.add_introspection(function_introspection_code(
+                    &ctx.pyo3_path,
+                    None,
+                    &field_python_name(field, options.name.as_ref(), renaming_rule)?,
+                    &FunctionSignature::from_arguments(vec![]),
+                    Some("self"),
+                    parse_quote!(-> #return_type),
+                    vec!["property".into()],
+                    Some(&parse_quote!(#cls)),
+                ));
+            }
             items.push(getter);
         }
 
         if let Some(set) = options.set {
             ensure_spanned!(frozen.is_none(), set.span() => "cannot use `#[pyo3(set)]` on a `frozen` class");
-            let setter = impl_py_setter_def(
+            let renaming_rule = rename_all.map(|rename_all| rename_all.value.rule);
+            #[cfg_attr(not(feature = "experimental-inspect"), allow(unused_mut))]
+            let mut setter = impl_py_setter_def(
                 &ty,
                 PropertyType::Descriptor {
                     field_index,
                     field,
                     python_name: options.name.as_ref(),
-                    renaming_rule: rename_all.map(|rename_all| rename_all.value.rule),
+                    renaming_rule,
                 },
                 ctx,
             )?;
+            #[cfg(feature = "experimental-inspect")]
+            {
+                // We generate introspection data
+                let name = field_python_name(field, options.name.as_ref(), renaming_rule)?;
+                setter.add_introspection(function_introspection_code(
+                    &ctx.pyo3_path,
+                    None,
+                    &name,
+                    &FunctionSignature::from_arguments(vec![FnArg::Regular(RegularArg {
+                        name: Cow::Owned(format_ident!("value")),
+                        ty: &field.ty,
+                        from_py_with: None,
+                        default_value: None,
+                        option_wrapped_type: None,
+                        annotation: None,
+                    })]),
+                    Some("self"),
+                    syn::ReturnType::Default,
+                    vec![format!("{name}.setter")],
+                    Some(&parse_quote!(#cls)),
+                ));
+            }
             items.push(setter);
         };
     }
@@ -1903,10 +1960,19 @@ fn impl_pytypeinfo(cls: &syn::Ident, attr: &PyClassArgs, ctx: &Ctx) -> TokenStre
         quote! { ::core::option::Option::None }
     };
 
+    let python_type = if cfg!(feature = "experimental-inspect") {
+        let full_name = get_class_python_module_and_name(cls, attr);
+        quote! { const PYTHON_TYPE: &'static str = #full_name; }
+    } else {
+        quote! {}
+    };
+
     quote! {
         unsafe impl #pyo3_path::type_object::PyTypeInfo for #cls {
             const NAME: &'static str = #cls_name;
             const MODULE: ::std::option::Option<&'static str> = #module;
+
+            #python_type
 
             #[inline]
             fn type_object_raw(py: #pyo3_path::Python<'_>) -> *mut #pyo3_path::ffi::PyTypeObject {
@@ -2249,7 +2315,6 @@ impl<'a> PyClassImplsBuilder<'a> {
     fn impl_all(&self, ctx: &Ctx) -> Result<TokenStream> {
         Ok([
             self.impl_pyclass(ctx),
-            self.impl_extractext(ctx),
             self.impl_into_py(ctx),
             self.impl_pyclassimpl(ctx)?,
             self.impl_add_to_module(ctx),
@@ -2273,58 +2338,6 @@ impl<'a> PyClassImplsBuilder<'a> {
         quote! {
             impl #pyo3_path::PyClass for #cls {
                 type Frozen = #frozen;
-            }
-        }
-    }
-    fn impl_extractext(&self, ctx: &Ctx) -> TokenStream {
-        let Ctx { pyo3_path, .. } = ctx;
-        let cls = self.cls;
-
-        let input_type = if cfg!(feature = "experimental-inspect") {
-            let full_name = get_class_python_module_and_name(cls, self.attr);
-            quote! { const INPUT_TYPE: &'static str = #full_name; }
-        } else {
-            quote! {}
-        };
-        if self.attr.options.frozen.is_some() {
-            quote! {
-                impl<'a, 'holder, 'py> #pyo3_path::impl_::extract_argument::PyFunctionArgument<'a, 'holder, 'py, false> for &'holder #cls
-                {
-                    type Holder = ::std::option::Option<#pyo3_path::PyClassGuard<'a, #cls>>;
-
-                    #input_type
-
-                    #[inline]
-                    fn extract(obj: &'a #pyo3_path::Bound<'py, #pyo3_path::PyAny>, holder: &'holder mut Self::Holder) -> #pyo3_path::PyResult<Self> {
-                        #pyo3_path::impl_::extract_argument::extract_pyclass_ref(obj, holder)
-                    }
-                }
-            }
-        } else {
-            quote! {
-                impl<'a, 'holder, 'py> #pyo3_path::impl_::extract_argument::PyFunctionArgument<'a, 'holder, 'py, false> for &'holder #cls
-                {
-                    type Holder = ::std::option::Option<#pyo3_path::PyClassGuard<'a, #cls>>;
-
-                    #input_type
-
-                    #[inline]
-                    fn extract(obj: &'a #pyo3_path::Bound<'py, #pyo3_path::PyAny>, holder: &'holder mut Self::Holder) -> #pyo3_path::PyResult<Self> {
-                        #pyo3_path::impl_::extract_argument::extract_pyclass_ref(obj, holder)
-                    }
-                }
-
-                impl<'a, 'holder, 'py> #pyo3_path::impl_::extract_argument::PyFunctionArgument<'a, 'holder, 'py, false> for &'holder mut #cls
-                {
-                    type Holder = ::std::option::Option<#pyo3_path::PyClassGuardMut<'a, #cls>>;
-
-                    #input_type
-
-                    #[inline]
-                    fn extract(obj: &'a #pyo3_path::Bound<'py, #pyo3_path::PyAny>, holder: &'holder mut Self::Holder) -> #pyo3_path::PyResult<Self> {
-                        #pyo3_path::impl_::extract_argument::extract_pyclass_ref_mut(obj, holder)
-                    }
-                }
             }
         }
     }
@@ -2506,7 +2519,37 @@ impl<'a> PyClassImplsBuilder<'a> {
             quote! {}
         };
 
+        let extract_pyclass_with_clone = if let Some(from_py_object) =
+            self.attr.options.from_py_object
+        {
+            let input_ty = if cfg!(feature = "experimental-inspect") {
+                quote!(const INPUT_TYPE: &'static str = <#cls as #pyo3_path::impl_::pyclass::PyClassImpl>::TYPE_NAME;)
+            } else {
+                TokenStream::new()
+            };
+            quote_spanned! { from_py_object.span() =>
+                impl<'a, 'py> #pyo3_path::FromPyObject<'a, 'py> for #cls
+                where
+                    Self: ::std::clone::Clone,
+                {
+                    type Error = #pyo3_path::pyclass::PyClassGuardError<'a, 'py>;
+
+                    #input_ty
+
+                    fn extract(obj: #pyo3_path::Borrowed<'a, 'py, #pyo3_path::PyAny>) -> ::std::result::Result<Self, Self::Error> {
+                        ::std::result::Result::Ok(::std::clone::Clone::clone(&*obj.extract::<#pyo3_path::PyClassGuard<'_, #cls>>()?))
+                    }
+                }
+            }
+        } else if self.attr.options.skip_from_py_object.is_none() {
+            quote!( impl #pyo3_path::impl_::pyclass::ExtractPyClassWithClone for #cls {} )
+        } else {
+            TokenStream::new()
+        };
+
         Ok(quote! {
+            #extract_pyclass_with_clone
+
             #assertions
 
             #pyclass_base_type_impl
