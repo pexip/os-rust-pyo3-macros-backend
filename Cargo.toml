@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.74"
 name = "pyo3-macros-backend"
-version = "0.26.0"
+version = "0.27.2"
 authors = ["PyO3 Project and Contributors <https://github.com/PyO3>"]
 build = "build.rs"
 autolib = false
@@ -53,7 +53,7 @@ version = "1.0.60"
 default-features = false
 
 [dependencies.pyo3-build-config]
-version = "=0.26.0"
+version = "=0.27.2"
 features = ["resolve-config"]
 
 [dependencies.quote]
@@ -74,7 +74,7 @@ features = [
 default-features = false
 
 [build-dependencies.pyo3-build-config]
-version = "=0.26.0"
+version = "=0.27.2"
 
 [lints.clippy]
 checked_conversions = "warn"
@@ -87,6 +87,7 @@ let_unit_value = "warn"
 manual_assert = "warn"
 manual_ok_or = "warn"
 todo = "warn"
+undocumented_unsafe_blocks = "allow"
 unnecessary_wraps = "warn"
 used_underscore_binding = "warn"
 useless_transmute = "warn"
